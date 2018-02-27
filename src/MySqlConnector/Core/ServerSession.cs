@@ -1,8 +1,10 @@
 using System;
+using System.Buffers;
 using System.Data;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.IO.Pipelines;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
@@ -33,6 +35,7 @@ namespace MySqlConnector.Core
 		{
 			m_lock = new object();
 			m_payloadCache = new ArraySegmentHolder<byte>();
+			m_memoryPool = MemoryPool<byte>.Default;
 			Id = (pool?.Id ?? 0) + "." + id;
 			CreatedUtc = DateTime.UtcNow;
 			Pool = pool;
@@ -703,6 +706,7 @@ namespace MySqlConnector.Core
 					m_tcpClient = tcpClient;
 					m_socket = m_tcpClient.Client;
 					m_networkStream = m_tcpClient.GetStream();
+					m_duplexPipe = new StreamPipeConnection(new PipeOptions(m_memoryPool), m_networkStream);
 					m_socket.SetKeepAlive(cs.Keepalive);
 					lock (m_lock)
 						m_state = State.Connected;
@@ -754,6 +758,7 @@ namespace MySqlConnector.Core
 			{
 				m_socket = socket;
 				m_networkStream = new NetworkStream(socket);
+				m_duplexPipe = new StreamPipeConnection(new PipeOptions(m_memoryPool), m_networkStream);
 
 				lock (m_lock)
 					m_state = State.Connected;
@@ -880,6 +885,7 @@ namespace MySqlConnector.Core
 				m_payloadHandler.ByteHandler = sslByteHandler;
 				m_isSecureConnection = true;
 				m_sslStream = sslStream;
+				m_duplexPipe = new StreamPipeConnection(new PipeOptions(m_memoryPool), m_sslStream);
 			}
 			catch (Exception ex)
 			{
@@ -1160,6 +1166,8 @@ namespace MySqlConnector.Core
 		Socket m_socket;
 		NetworkStream m_networkStream;
 		SslStream m_sslStream;
+		MemoryPool<byte> m_memoryPool;
+		IDuplexPipe m_duplexPipe;
 #if !NET45
 		IDisposable m_clientCertificate;
 		IDisposable m_serverCertificate;
